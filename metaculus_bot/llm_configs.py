@@ -77,18 +77,27 @@ FORECASTER_LLMS: list[GeneralLlm] = [
         extra_body={"verbosity": "high"},
         **REASONING_MODEL_CONFIG,
     ),
-    build_llm_with_openrouter_fallback(
-        model="openrouter/google/gemini-3.1-pro-preview",
-        **REASONING_MODEL_CONFIG,
-    ),
+    # 2026-06-13: Gemini and Grok forecasters disabled to stop personal-key billing.
+    # These two are the only base forecasters that bill the operator's personal
+    # OPENROUTER_API_KEY: Grok (x-ai) has no donated-key coverage at all, and the
+    # donated key's Google route is rate-limited (429), so every Gemini call falls
+    # back to the personal key. With the donated key now successfully serving the
+    # OpenAI/Anthropic forecasters, disabling these two zeroes out personal OpenRouter
+    # spend (and removes the 402 "monthly limit" degradation seen on 2026-06-12).
+    # Kept commented (not deleted) so the lineup can be restored if/when the donated
+    # Google route stabilizes or a personal-key budget is restored.
+    # build_llm_with_openrouter_fallback(
+    #     model="openrouter/google/gemini-3.1-pro-preview",
+    #     **REASONING_MODEL_CONFIG,
+    # ),
     # 2026-05-18: migrated from x-ai/grok-4.1-fast (deprecated 2026-05-15 by xAI).
     # Added explicit reasoning effort=high to match the gpt-5.4/5.5 reasoning peers
     # (4.3 defaults to low effort if unspecified, vs. 4.1-fast which had no effort flag).
-    build_llm_with_openrouter_fallback(
-        model="openrouter/x-ai/grok-4.3",
-        reasoning={"effort": "high"},
-        **REASONING_MODEL_CONFIG,
-    ),
+    # build_llm_with_openrouter_fallback(
+    #     model="openrouter/x-ai/grok-4.3",
+    #     reasoning={"effort": "high"},
+    #     **REASONING_MODEL_CONFIG,
+    # ),
 ]
 
 
