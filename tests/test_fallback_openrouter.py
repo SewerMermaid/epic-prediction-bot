@@ -1,10 +1,14 @@
 from unittest.mock import AsyncMock
 
 import pytest
+from forecasting_tools import GeneralLlm
 
 from metaculus_bot.fallback_openrouter import (
     DONATED_KEY_PROVIDERS,
     FallbackOpenRouterLlm,
+    ModelFallbackLlm,
+    _is_throttle_error,
+    build_llm_with_model_fallback,
     build_llm_with_openrouter_fallback,
     should_retry_with_general_key,
     should_route_via_donated_key,
@@ -286,6 +290,99 @@ class TestBuilder:
         llm = build_llm_with_openrouter_fallback("openrouter/google/gemini-3.1-pro-preview")
         assert isinstance(llm, GL)
         assert not isinstance(llm, FallbackOpenRouterLlm)
+
+
+class TestModelFallback:
+    """Model-level throttle fallback (added 2026-07-11 when the Gemini forecaster
+    was re-enabled on gemini-3.5-flash with a switch to gemini-3.1-pro on throttle).
+    """
+
+    @pytest.mark.parametrize(
+        "message, expected",
+        [
+            ("429 Too Many Requests", True),
+            ("Rate limit exceeded", True),
+            ("rate-limited upstream by provider", True),
+            ("RESOURCE_EXHAUSTED", True),
+            ("google.api_core resource exhausted", True),
+            # Non-throttle errors: switching model won't help, so no switch.
+            ("402 Payment Required: insufficient credit", False),
+            ("401 Unauthorized", False),
+            ("403 Forbidden moderation", False),
+            ("503 Service Unavailable", False),
+        ],
+    )
+    def test_is_throttle_error_text(self, message: str, expected: bool) -> None:
+        assert _is_throttle_error(Exception(message)) is expected
+
+    def test_is_throttle_error_typed_ratelimit(self) -> None:
+        import litellm
+
+        exc = litellm.RateLimitError(
+            message="Rate limit exceeded",
+            model="openrouter/google/gemini-3.5-flash",
+            llm_provider="openrouter",
+        )
+        assert _is_throttle_error(exc) is True
+
+    @pytest.mark.asyncio
+    async def test_primary_success_no_switch(self) -> None:
+        primary = GeneralLlm(model="openrouter/google/gemini-3.5-flash")
+        fallback = GeneralLlm(model="openrouter/google/gemini-3.1-pro-preview")
+        primary.invoke = AsyncMock(return_value="primary_answer")  # type: ignore[method-assign]
+        fallback.invoke = AsyncMock(return_value="fallback_answer")  # type: ignore[method-assign]
+
+        llm = ModelFallbackLlm(primary=primary, fallback=fallback)
+        assert await llm.invoke("hi") == "primary_answer"
+        fallback.invoke.assert_not_awaited()
+        # .model mirrors the primary for downstream label logic.
+        assert llm.model == "openrouter/google/gemini-3.5-flash"
+
+    @pytest.mark.asyncio
+    async def test_switches_model_on_throttle(self) -> None:
+        import litellm
+
+        primary = GeneralLlm(model="openrouter/google/gemini-3.5-flash")
+        fallback = GeneralLlm(model="openrouter/google/gemini-3.1-pro-preview")
+        exc = litellm.RateLimitError(
+            message="Rate limit exceeded",
+            model="openrouter/google/gemini-3.5-flash",
+            llm_provider="openrouter",
+        )
+        primary.invoke = AsyncMock(side_effect=exc)  # type: ignore[method-assign]
+        fallback.invoke = AsyncMock(return_value="fallback_answer")  # type: ignore[method-assign]
+
+        llm = ModelFallbackLlm(primary=primary, fallback=fallback)
+        assert await llm.invoke("hi") == "fallback_answer"
+        fallback.invoke.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_no_switch_on_non_throttle(self) -> None:
+        primary = GeneralLlm(model="openrouter/google/gemini-3.5-flash")
+        fallback = GeneralLlm(model="openrouter/google/gemini-3.1-pro-preview")
+        primary.invoke = AsyncMock(side_effect=Exception("402 Payment Required"))  # type: ignore[method-assign]
+        fallback.invoke = AsyncMock(return_value="fallback_answer")  # type: ignore[method-assign]
+
+        llm = ModelFallbackLlm(primary=primary, fallback=fallback)
+        with pytest.raises(Exception, match="402"):
+            await llm.invoke("hi")
+        fallback.invoke.assert_not_awaited()
+
+    def test_builder_wraps_both_models(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Both underlying models keep their own donated-key wrapper; the outer
+        object is a ModelFallbackLlm reporting the primary model.
+        """
+        monkeypatch.setenv("OAI_ANTH_OPENROUTER_KEY", "special")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "general")
+        monkeypatch.setenv("GEMINI_USE_DONATED_OPENROUTER_KEY", "true")
+        llm = build_llm_with_model_fallback(
+            primary_model="openrouter/google/gemini-3.5-flash",
+            fallback_model="openrouter/google/gemini-3.1-pro-preview",
+        )
+        assert isinstance(llm, ModelFallbackLlm)
+        assert llm.model == "openrouter/google/gemini-3.5-flash"
+        assert isinstance(llm._primary_llm, FallbackOpenRouterLlm)
+        assert isinstance(llm._fallback_llm, FallbackOpenRouterLlm)
 
 
 class TestDeprecationTripwire:
