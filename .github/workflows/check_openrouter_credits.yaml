@@ -58,10 +58,15 @@ jobs:
           POETRY_INSTALLER_PARALLEL: true
       - name: Check OpenRouter credit balances
         # Reads both keys from repo secrets. The CLI redacts the keys to the last
-        # 4 chars, so nothing sensitive lands in the log or the job summary.
+        # 4 chars, so nothing sensitive lands in the log, the job summary, or the
+        # Discord message.
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OAI_ANTH_OPENROUTER_KEY: ${{ secrets.OAI_ANTH_OPENROUTER_KEY }}
+          # Optional: set this repo secret to receive the report in Discord.
+          # If unset, the step still writes the job summary and just skips the post.
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           out="$(poetry run python -m metaculus_bot.check_openrouter_credits || true)"
           echo "$out"
@@ -71,3 +76,18 @@ jobs:
             echo "$out"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -z "$DISCORD_WEBHOOK_URL" ]; then
+            echo "DISCORD_WEBHOOK_URL not set — skipping Discord post."
+            exit 0
+          fi
+
+          # Build the JSON payload with jq so newlines / backticks / $ in the
+          # report are escaped safely. Discord's content cap is 2000 chars; the
+          # report is well under that.
+          payload="$(jq -Rs \
+            --arg title "OpenRouter credit balances" \
+            --arg link "$RUN_URL" \
+            '{content: ("**" + $title + "**\n```\n" + . + "```\n" + $link)}' <<< "$out")"
+          curl -sS --fail -X POST -H "Content-Type: application/json" \
+            -d "$payload" "$DISCORD_WEBHOOK_URL"
