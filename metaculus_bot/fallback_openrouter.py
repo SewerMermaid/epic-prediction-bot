@@ -9,6 +9,7 @@ from metaculus_bot.constants import (
     OAI_ANTH_OPENROUTER_KEY_ENV,
     OPENROUTER_API_KEY_ENV,
     gemini_use_donated_openrouter_key,
+    openrouter_personal_key_fallback_enabled,
 )
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -408,7 +409,17 @@ def build_llm_with_openrouter_fallback(model: str, **kwargs: Any) -> GeneralLlm:
         special_key = os.getenv(OAI_ANTH_OPENROUTER_KEY_ENV)
         general_key = os.getenv(OPENROUTER_API_KEY_ENV)
 
-        # If both keys exist and are distinct, use the fallback wrapper
+        # Personal-key fallback is gated OFF by default (see
+        # openrouter_personal_key_fallback_enabled). When disabled, use the
+        # donated key alone — no secondary — so a donated-key failure surfaces
+        # instead of billing the operator's personal OPENROUTER_API_KEY. The
+        # personal key is still used as the *sole* key when no donated key is
+        # configured (e.g. local dev), since that isn't a fallback.
+        if not openrouter_personal_key_fallback_enabled():
+            api_key = special_key or general_key
+            return GeneralLlm(model=model, api_key=api_key, **kwargs)
+
+        # Fallback enabled: if both keys exist and are distinct, use the wrapper.
         if special_key and general_key and special_key != general_key:
             return FallbackOpenRouterLlm(
                 model=model,

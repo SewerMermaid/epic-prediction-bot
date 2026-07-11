@@ -42,6 +42,21 @@ def gemini_use_donated_openrouter_key() -> bool:
     return os.getenv(GEMINI_USE_DONATED_OPENROUTER_KEY_ENV, "false").strip().lower() == "true"
 
 
+def openrouter_personal_key_fallback_enabled() -> bool:
+    """Whether a failed donated-key OpenRouter call may retry on the personal key.
+
+    Returns True iff OPENROUTER_PERSONAL_KEY_FALLBACK=="true". Default is False —
+    personal-key (OPENROUTER_API_KEY) fallback is OFF for all models, so a
+    donated-key (OAI_ANTH_OPENROUTER_KEY) failure surfaces rather than silently
+    billing the operator's personal OpenRouter account. Read at call time so a
+    workflow env change takes effect without re-importing.
+
+    Scope: OpenRouter routing only (``fallback_openrouter``). Does not affect the
+    google-genai grounded-search provider, which always uses GOOGLE_API_KEY.
+    """
+    return os.getenv(OPENROUTER_PERSONAL_KEY_FALLBACK_ENV, "false").strip().lower() == "true"
+
+
 class TournamentExpiredError(Exception):
     """Raised when the tournament has ended and the ID needs to be updated."""
 
@@ -113,6 +128,15 @@ RESEARCH_PROVIDER_ENV: str = "RESEARCH_PROVIDER"
 # for which of these are shared (donated) vs. personal.
 OPENROUTER_API_KEY_ENV: str = "OPENROUTER_API_KEY"
 OAI_ANTH_OPENROUTER_KEY_ENV: str = "OAI_ANTH_OPENROUTER_KEY"
+# Toggle for the donated -> personal OpenRouter key fallback. When "true", a
+# donated-key (OAI_ANTH_OPENROUTER_KEY) call that fails with a credential/credit/
+# allowed-providers/429 error retries on the operator's personal OPENROUTER_API_KEY
+# (see FallbackOpenRouterLlm). Default "false": personal-key fallback is OFF for
+# all models, so a donated-key failure surfaces instead of billing the personal
+# key. Read at call time so workflow env changes take effect without re-import.
+# Scope: OpenRouter only — does NOT affect the google-genai grounded-search
+# provider, which always uses the personal GOOGLE_API_KEY (a separate provider/key).
+OPENROUTER_PERSONAL_KEY_FALLBACK_ENV: str = "OPENROUTER_PERSONAL_KEY_FALLBACK"
 ASKNEWS_CLIENT_ID_ENV: str = "ASKNEWS_CLIENT_ID"
 ASKNEWS_SECRET_ENV: str = "ASKNEWS_SECRET"
 EXA_API_KEY_ENV: str = "EXA_API_KEY"

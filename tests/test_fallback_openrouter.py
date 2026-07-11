@@ -227,8 +227,24 @@ class TestBuilder:
     def test_builder_returns_wrapper_when_both_keys(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("OAI_ANTH_OPENROUTER_KEY", "special")
         monkeypatch.setenv("OPENROUTER_API_KEY", "general")
+        # Wrapper is only built when personal-key fallback is explicitly enabled.
+        monkeypatch.setenv("OPENROUTER_PERSONAL_KEY_FALLBACK", "true")
         llm = build_llm_with_openrouter_fallback("openrouter/openai/gpt-5.1")
         assert isinstance(llm, FallbackOpenRouterLlm)
+
+    def test_builder_plain_when_personal_fallback_disabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Default (toggle off): even with both keys, a donated-covered model gets a
+        plain GeneralLlm on the donated key — no FallbackOpenRouterLlm, so a
+        donated-key failure never bills the personal OPENROUTER_API_KEY.
+        """
+        from forecasting_tools import GeneralLlm as GL
+
+        monkeypatch.setenv("OAI_ANTH_OPENROUTER_KEY", "special")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "general")
+        monkeypatch.delenv("OPENROUTER_PERSONAL_KEY_FALLBACK", raising=False)
+        llm = build_llm_with_openrouter_fallback("openrouter/openai/gpt-5.1")
+        assert isinstance(llm, GL)
+        assert not isinstance(llm, FallbackOpenRouterLlm)
 
     def test_builder_plain_when_only_general(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("OAI_ANTH_OPENROUTER_KEY", raising=False)
@@ -263,6 +279,7 @@ class TestBuilder:
         monkeypatch.setenv("OAI_ANTH_OPENROUTER_KEY", "special")
         monkeypatch.setenv("OPENROUTER_API_KEY", "general")
         monkeypatch.setenv("GEMINI_USE_DONATED_OPENROUTER_KEY", "true")
+        monkeypatch.setenv("OPENROUTER_PERSONAL_KEY_FALLBACK", "true")
         llm = build_llm_with_openrouter_fallback("openrouter/google/gemini-3.1-pro-preview")
         assert isinstance(llm, FallbackOpenRouterLlm)
 
@@ -375,6 +392,7 @@ class TestModelFallback:
         monkeypatch.setenv("OAI_ANTH_OPENROUTER_KEY", "special")
         monkeypatch.setenv("OPENROUTER_API_KEY", "general")
         monkeypatch.setenv("GEMINI_USE_DONATED_OPENROUTER_KEY", "true")
+        monkeypatch.setenv("OPENROUTER_PERSONAL_KEY_FALLBACK", "true")
         llm = build_llm_with_model_fallback(
             primary_model="openrouter/google/gemini-3.5-flash",
             fallback_model="openrouter/google/gemini-3.1-pro-preview",
