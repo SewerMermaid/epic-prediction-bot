@@ -20,7 +20,11 @@ import sys
 
 from metaculus_bot.minibench_analysis.aggregate import BotSummary, QuestionVerdict, summarize_bot
 from metaculus_bot.minibench_analysis.client import MetaculusClient
-from metaculus_bot.minibench_analysis.parse import iter_question_jsons, verdict_from_question
+from metaculus_bot.minibench_analysis.parse import (
+    iter_question_jsons,
+    my_bot_question_detail,
+    verdict_from_question,
+)
 from metaculus_bot.minibench_analysis.report import (
     my_bot_accuracy_records,
     my_bot_answered_records,
@@ -42,6 +46,17 @@ def _my_bot_verdicts(posts: list[dict]) -> list[QuestionVerdict]:
             if v is not None:
                 verdicts.append(v)
     return verdicts
+
+
+def _my_bot_question_rows(posts: list[dict], label: str | None = None) -> list[dict]:
+    """Per-question detail rows for my bot (title, links, forecast text, verdict)."""
+    rows: list[dict] = []
+    for post in posts:
+        for qjson in iter_question_jsons(post):
+            row = my_bot_question_detail(post, qjson, minibench_label=label)
+            if row is not None:
+                rows.append(row)
+    return rows
 
 
 def _try_other_bot_forecast(qjson: dict, user_id: int | None) -> list[float] | None:
@@ -114,10 +129,12 @@ def run_two_sessions_ago(client: MetaculusClient, output_dir: str, *, offset: in
     my_summary = summarize_bot("my-bot", _my_bot_verdicts(posts))
     answered = my_bot_answered_records(my_summary, label=label)
     accuracy = my_bot_accuracy_records(my_summary, label=label)
+    question_rows = _my_bot_question_rows(posts, label=label)
     write_csv([answered], os.path.join(output_dir, "my_bot_answered.csv"))
     write_csv([accuracy], os.path.join(output_dir, "my_bot_accuracy.csv"))
+    write_csv(question_rows, os.path.join(output_dir, "my_bot_questions.csv"))
     write_xlsx(
-        {"answered": [answered], "accuracy": [accuracy], "top_bots": top_rows},
+        {"answered": [answered], "accuracy": [accuracy], "questions": question_rows, "top_bots": top_rows},
         os.path.join(output_dir, "my_bot_report.xlsx"),
     )
 
@@ -138,17 +155,20 @@ def run_all_except_current(client: MetaculusClient, output_dir: str) -> str:
 
     answered_rows: list[dict] = []
     accuracy_rows: list[dict] = []
+    question_rows: list[dict] = []
     for t in past:
         label = t.get("name") or t.get("slug") or str(t.get("id"))
         posts = client.get_resolved_posts(t.get("id") or t.get("slug"))
         summary = summarize_bot("my-bot", _my_bot_verdicts(posts))
         answered_rows.append(my_bot_answered_records(summary, label=label))
         accuracy_rows.append(my_bot_accuracy_records(summary, label=label))
+        question_rows.extend(_my_bot_question_rows(posts, label=label))
 
     write_csv(answered_rows, os.path.join(output_dir, "my_bot_history_answered.csv"))
     write_csv(accuracy_rows, os.path.join(output_dir, "my_bot_history_accuracy.csv"))
+    write_csv(question_rows, os.path.join(output_dir, "my_bot_history_questions.csv"))
     write_xlsx(
-        {"answered": answered_rows, "accuracy": accuracy_rows},
+        {"answered": answered_rows, "accuracy": accuracy_rows, "questions": question_rows},
         os.path.join(output_dir, "my_bot_history.xlsx"),
     )
 

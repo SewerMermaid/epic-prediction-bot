@@ -1,7 +1,10 @@
 """Tests for parsing raw Metaculus JSON into verdicts."""
 
 from metaculus_bot.minibench_analysis.parse import (
+    build_question_url,
+    format_my_prediction,
     iter_question_jsons,
+    my_bot_question_detail,
     parse_resolution,
     type_bucket,
     verdict_from_question,
@@ -124,3 +127,44 @@ class TestVerdicts:
         # Resolution numerically outside the axis -> not scorable.
         v = verdict_from_question(_numeric_q("150"), is_my_bot=True)
         assert v.scorable is False
+
+
+class TestQuestionDetail:
+    def test_build_url_with_and_without_slug(self):
+        assert build_question_url({"id": 42, "slug": "will-x"}, {}) == "https://www.metaculus.com/questions/42/will-x/"
+        assert build_question_url({"id": 42}, {}) == "https://www.metaculus.com/questions/42/"
+        assert build_question_url({}, {}) is None
+
+    def test_format_prediction_binary(self):
+        assert format_my_prediction("binary", [0.2, 0.8], {}) == "80% yes"
+
+    def test_format_prediction_mc(self):
+        q = {"options": ["A", "B", "C"]}
+        assert format_my_prediction("multiple_choice", [0.2, 0.5, 0.3], q) == "B (50%)"
+
+    def test_format_prediction_numeric(self):
+        q = {"scaling": {"range_min": 0.0, "range_max": 100.0, "zero_point": None}}
+        cdf = [i / 200 for i in range(201)]
+        out = format_my_prediction("numeric", cdf, q)
+        assert out.startswith("P25=") and "P50=" in out and "P75=" in out
+
+    def test_format_prediction_empty_when_no_values(self):
+        assert format_my_prediction("binary", None, {}) == ""
+
+    def test_question_detail_row(self):
+        post = {
+            "id": 100,
+            "slug": "will-it-rain",
+            "title": "Will it rain?",
+            "question": _binary_q("yes", 0.9),
+        }
+        qjson = post["question"]
+        row = my_bot_question_detail(post, qjson, minibench_label="MiniBench A")
+        assert row["minibench"] == "MiniBench A"
+        assert row["title"] == "Will it rain?"
+        assert row["question_url"] == "https://www.metaculus.com/questions/100/will-it-rain/"
+        assert row["my_answer_url"] == row["question_url"]
+        assert row["my_prediction"] == "90% yes"
+        assert row["resolution"] == "yes"
+        assert row["beat_chance"] is True
+        assert row["tier2_correct"] is True

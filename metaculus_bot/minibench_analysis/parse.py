@@ -22,6 +22,8 @@ from metaculus_bot.minibench_analysis.scoring import (
 
 logger = logging.getLogger(__name__)
 
+METACULUS_BASE = "https://www.metaculus.com"
+
 # Resolution strings that mean "no ground truth" -> excluded from denominators.
 _NON_SCORABLE = {"annulled", "ambiguous", "above_upper_bound", "below_lower_bound"}
 
@@ -163,3 +165,74 @@ def verdict_from_question(
         logger.warning("Could not classify question %s (%s): %s", qid, bucket, exc)
         verdict.scorable = False
     return verdict
+
+
+def build_question_url(post: dict[str, Any], qjson: dict[str, Any]) -> str | None:
+    """Canonical Metaculus question URL from the post id (+ slug when present)."""
+    post_id = post.get("id") or qjson.get("post_id")
+    if post_id is None:
+        return None
+    slug = post.get("slug") or qjson.get("slug")
+    tail = f"{slug}/" if slug else ""
+    return f"{METACULUS_BASE}/questions/{post_id}/{tail}"
+
+
+def format_my_prediction(bucket: str, values: list[float] | None, qjson: dict[str, Any]) -> str:
+    """Human-readable rendering of the bot's own forecast for the per-question list."""
+    if not values:
+        return ""
+    try:
+        if bucket == "binary":
+            return f"{float(values[-1]) * 100:.0f}% yes"
+        if bucket == "multiple_choice":
+            probs = [float(v) for v in values]
+            options = qjson.get("options") or []
+            i = max(range(len(probs)), key=lambda k: probs[k])
+            label = options[i] if i < len(options) else f"option {i}"
+            return f"{label} ({probs[i] * 100:.0f}%)"
+        cdf = _numeric_cdf(qjson, [float(v) for v in values])
+        if cdf is None:
+            return ""
+        p25, p50, p75 = (cdf.value_at_percentile(q) for q in (0.25, 0.5, 0.75))
+        return f"P25={p25:.4g}, P50={p50:.4g}, P75={p75:.4g}"
+    except (ValueError, IndexError, TypeError):
+        return ""
+
+
+def my_bot_question_detail(
+    post: dict[str, Any], qjson: dict[str, Any], *, minibench_label: str | None = None
+) -> dict[str, Any] | None:
+    """One per-question row for my bot: title, links, forecast text, verdict.
+
+    All fields come from the already-fetched post/question JSON — no extra API
+    call. ``my_answer_url`` is the question URL (Metaculus renders the bot's own
+    forecast there; there is no separate per-forecast permalink).
+    """
+    bucket = type_bucket(qjson)
+    if bucket is None:
+        return None
+    verdict = verdict_from_question(qjson, is_my_bot=True)
+    if verdict is None:
+        return None
+    values = _latest_forecast_values(qjson)
+    url = build_question_url(post, qjson)
+    row: dict[str, Any] = {}
+    if minibench_label is not None:
+        row["minibench"] = minibench_label
+    row.update(
+        {
+            "question_id": qjson.get("id"),
+            "question_type": bucket,
+            "title": post.get("title") or qjson.get("title"),
+            "question_url": url,
+            "my_answer_url": url,
+            "my_prediction": format_my_prediction(bucket, values, qjson),
+            "resolution": qjson.get("resolution"),
+            "answered": verdict.answered,
+            "scorable": verdict.scorable,
+            "beat_chance": verdict.beat_chance,
+            "tier2_correct": verdict.tier2_correct,
+            "peer_score": verdict.peer_score,
+        }
+    )
+    return row

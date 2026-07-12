@@ -38,29 +38,38 @@ class _FakeClient:
         # Two binary (one hit, one miss), one numeric uniform (IQR hit, not beat-chance).
         return [
             {
+                "id": 101,
+                "slug": "q-one",
+                "title": "Question one?",
                 "question": {
                     "id": 1,
                     "type": "binary",
                     "resolution": "yes",
                     "my_forecasts": {"latest": {"forecast_values": [0.2, 0.8]}},
-                }
+                },
             },
             {
+                "id": 102,
+                "slug": "q-two",
+                "title": "Question two?",
                 "question": {
                     "id": 2,
                     "type": "binary",
                     "resolution": "no",
                     "my_forecasts": {"latest": {"forecast_values": [0.3, 0.7]}},
-                }
+                },
             },
             {
+                "id": 103,
+                "slug": "q-three",
+                "title": "Question three?",
                 "question": {
                     "id": 3,
                     "type": "numeric",
                     "resolution": "50",
                     "scaling": {"range_min": 0.0, "range_max": 100.0, "zero_point": None},
                     "my_forecasts": {"latest": {"forecast_values": [i / 200 for i in range(201)]}},
-                }
+                },
             },
         ]
 
@@ -85,6 +94,18 @@ def test_two_sessions_ago_writes_files_and_summary(tmp_path, monkeypatch):
     top = pd.read_csv(tmp_path / "top_bots_accuracy.csv")
     assert list(top["bot"]) == ["alpha", "beta"]
     assert not top["per_question_available"].any()  # other bots' forecasts not exposed
+
+    questions = pd.read_csv(tmp_path / "my_bot_questions.csv")
+    assert len(questions) == 3
+    assert set(questions["question_url"]) == {
+        "https://www.metaculus.com/questions/101/q-one/",
+        "https://www.metaculus.com/questions/102/q-two/",
+        "https://www.metaculus.com/questions/103/q-three/",
+    }
+    assert (questions["question_url"] == questions["my_answer_url"]).all()
+    q1 = questions[questions["question_id"] == 1].iloc[0]
+    assert q1["my_prediction"] == "80% yes"
+    assert q1["title"] == "Question one?"
 
 
 def test_two_sessions_ago_targets_correct_tournament(tmp_path, monkeypatch):
@@ -121,6 +142,10 @@ def test_all_except_current_excludes_latest(tmp_path, monkeypatch):
     hist = pd.read_csv(tmp_path / "my_bot_history_answered.csv")
     assert len(hist) == 2
     assert list(hist["total_answered"]) == [3, 3]
+
+    q_hist = pd.read_csv(tmp_path / "my_bot_history_questions.csv")
+    assert len(q_hist) == 6  # 3 questions x 2 past minibenches
+    assert set(q_hist["minibench"]) == {"MiniBench A", "MiniBench B"}
 
 
 def test_report_records_shapes():
