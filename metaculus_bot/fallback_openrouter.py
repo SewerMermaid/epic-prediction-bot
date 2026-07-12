@@ -9,6 +9,7 @@ from metaculus_bot.constants import (
     OAI_ANTH_OPENROUTER_KEY_ENV,
     OPENROUTER_API_KEY_ENV,
     gemini_use_donated_openrouter_key,
+    openrouter_personal_key_fallback_enabled,
 )
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -314,6 +315,90 @@ class FallbackOpenRouterLlm(GeneralLlm):
         return await self._secondary_llm.invoke(prompt)
 
 
+def _is_throttle_error(exc: Exception) -> bool:
+    """Whether ``exc`` looks like an upstream throttle / rate-limit (429).
+
+    Narrower than ``should_retry_with_general_key`` on purpose: that predicate
+    governs *key*-level fallback (donated → personal) and also fires on
+    credit/credential errors (401/402/guardrail), where swapping to a different
+    *model* on the same key would not help. This predicate governs the
+    *model*-level switch in ``ModelFallbackLlm``, which is only worth doing when
+    the failure is a per-model rate limit — Google applies per-model RPM quotas,
+    so a throttled model can be dodged by routing the same prompt to a sibling
+    model. Matches the typed litellm 429 plus the same textual 429 cues used by
+    ``should_retry_with_general_key`` (including Google's ``RESOURCE_EXHAUSTED``).
+    """
+    import litellm  # noqa: PLC0415  # function-scoped: matches should_retry_with_general_key
+
+    if isinstance(exc, litellm.RateLimitError):
+        return True
+    msg = str(exc).lower()
+    return (
+        "429" in msg
+        or "too many requests" in msg
+        or "rate limit" in msg
+        or "rate-limited upstream" in msg
+        or "resource_exhausted" in msg
+        or "resource exhausted" in msg
+    )
+
+
+class ModelFallbackLlm(GeneralLlm):
+    """A GeneralLlm that switches to a *different model* when the primary is throttled.
+
+    Layered ON TOP of the donated-key fallback: ``primary`` and ``fallback`` are
+    each themselves ``build_llm_with_openrouter_fallback`` results, so each keeps
+    its own donated → personal key fallback. This wrapper adds a second, outer
+    layer that only fires on throttle-shaped errors (see ``_is_throttle_error``):
+    when the primary model is rate-limited even after its own key fallback, the
+    same prompt is retried against the fallback model so the ensemble keeps its
+    Gemini vote instead of dropping it. Non-throttle errors propagate unchanged
+    so the framework's per-forecaster error handling still applies.
+
+    ``.model`` mirrors the primary so downstream label logic
+    (``_forecaster_display_name``) reports the model that normally answers.
+    """
+
+    def __init__(self, *, primary: GeneralLlm, fallback: GeneralLlm) -> None:
+        super().__init__(model=primary.model)
+        self._primary_llm: GeneralLlm = primary
+        self._fallback_llm: GeneralLlm = fallback
+        self._has_warned_once: bool = False
+
+    async def invoke(self, prompt: Any) -> str:  # type: ignore[override]
+        try:
+            return await self._primary_llm.invoke(prompt)
+        except Exception as e:
+            if _is_throttle_error(e):
+                if not self._has_warned_once:
+                    logger.warning(
+                        "Primary model %s throttled (even after key fallback); switching to fallback "
+                        "model %s for this call. error=%s: %s",
+                        self._primary_llm.model,
+                        self._fallback_llm.model,
+                        type(e).__name__,
+                        e,
+                    )
+                    self._has_warned_once = True
+                # ASYNC120: discarding the primary's throttle exception is intended —
+                # the caller asked for a model-level fallback, not a re-raise.
+                return await self._fallback_llm.invoke(prompt)  # noqa: ASYNC120
+            raise
+
+
+def build_llm_with_model_fallback(primary_model: str, fallback_model: str, **kwargs: Any) -> GeneralLlm:
+    """Build a forecaster that answers on ``primary_model`` and, when that model is
+    throttled, retries the same prompt on ``fallback_model``.
+
+    Both models are wrapped with ``build_llm_with_openrouter_fallback`` first, so
+    each retains donated → personal OpenRouter key fallback. The same ``kwargs``
+    (sampling config, timeouts, etc.) are applied to both.
+    """
+    primary = build_llm_with_openrouter_fallback(model=primary_model, **kwargs)
+    fallback = build_llm_with_openrouter_fallback(model=fallback_model, **kwargs)
+    return ModelFallbackLlm(primary=primary, fallback=fallback)
+
+
 def build_llm_with_openrouter_fallback(model: str, **kwargs: Any) -> GeneralLlm:
     """
     Construct a GeneralLlm that automatically falls back from the Metaculus-donated OpenRouter
@@ -324,7 +409,17 @@ def build_llm_with_openrouter_fallback(model: str, **kwargs: Any) -> GeneralLlm:
         special_key = os.getenv(OAI_ANTH_OPENROUTER_KEY_ENV)
         general_key = os.getenv(OPENROUTER_API_KEY_ENV)
 
-        # If both keys exist and are distinct, use the fallback wrapper
+        # Personal-key fallback is gated OFF by default (see
+        # openrouter_personal_key_fallback_enabled). When disabled, use the
+        # donated key alone — no secondary — so a donated-key failure surfaces
+        # instead of billing the operator's personal OPENROUTER_API_KEY. The
+        # personal key is still used as the *sole* key when no donated key is
+        # configured (e.g. local dev), since that isn't a fallback.
+        if not openrouter_personal_key_fallback_enabled():
+            api_key = special_key or general_key
+            return GeneralLlm(model=model, api_key=api_key, **kwargs)
+
+        # Fallback enabled: if both keys exist and are distinct, use the wrapper.
         if special_key and general_key and special_key != general_key:
             return FallbackOpenRouterLlm(
                 model=model,

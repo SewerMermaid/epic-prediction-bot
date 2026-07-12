@@ -1,0 +1,93 @@
+name: Check OpenRouter credits
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Once a day at 13:00 UTC. Surfaces the donated key's remaining monthly
+    # balance and any personal-key usage in the run's job summary.
+    - cron: "0 13 * * *"
+
+# Prevent overlapping runs (a scheduled tick + a manual dispatch).
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  check_credits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        id: setup-python
+        with:
+          python-version: "3.11"
+      - name: Install poetry
+        uses: snok/install-poetry@v1
+        continue-on-error: true
+        with:
+          version: 2.2.1
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+          installer-parallel: true
+      - name: Ensure Poetry is available (fallback install)
+        run: |
+          poetry --version || (
+            python -m pip install -U pip &&
+            for i in 1 2 3; do
+              python -m pip install "poetry==2.2.1" && break || sleep 10;
+            done &&
+            poetry --version
+          )
+      - name: Load cached venv
+        id: cached-poetry-dependencies
+        uses: actions/cache@v5
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('**/poetry.lock') }}
+      - name: Install dependencies
+        uses: nick-fields/retry@v4
+        with:
+          max_attempts: 3
+          retry_on: error
+          timeout_minutes: 10
+          command: poetry install --no-interaction --no-root
+        env:
+          POETRY_VIRTUALENVS_CREATE: true
+          POETRY_VIRTUALENVS_IN_PROJECT: true
+          POETRY_INSTALLER_PARALLEL: true
+      - name: Check OpenRouter credit balances
+        # Reads both keys from repo secrets. The CLI redacts the keys to the last
+        # 4 chars, so nothing sensitive lands in the log, the job summary, or the
+        # Discord message.
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OAI_ANTH_OPENROUTER_KEY: ${{ secrets.OAI_ANTH_OPENROUTER_KEY }}
+          # Optional: set this repo secret to receive the report in Discord.
+          # If unset, the step still writes the job summary and just skips the post.
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          out="$(poetry run python -m metaculus_bot.check_openrouter_credits || true)"
+          echo "$out"
+          {
+            echo '### OpenRouter credit balances'
+            echo '```'
+            echo "$out"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -z "$DISCORD_WEBHOOK_URL" ]; then
+            echo "DISCORD_WEBHOOK_URL not set — skipping Discord post."
+            exit 0
+          fi
+
+          # Build the JSON payload with jq so newlines / backticks / $ in the
+          # report are escaped safely. Discord's content cap is 2000 chars; the
+          # report is well under that.
+          payload="$(jq -Rs \
+            --arg title "OpenRouter credit balances" \
+            --arg link "$RUN_URL" \
+            '{content: ("**" + $title + "**\n```\n" + . + "```\n" + $link)}' <<< "$out")"
+          curl -sS --fail -X POST -H "Content-Type: application/json" \
+            -d "$payload" "$DISCORD_WEBHOOK_URL"

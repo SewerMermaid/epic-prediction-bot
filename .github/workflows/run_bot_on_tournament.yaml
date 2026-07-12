@@ -75,6 +75,12 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OAI_ANTH_OPENROUTER_KEY: ${{ secrets.OAI_ANTH_OPENROUTER_KEY }}
+          # Personal-key fallback OFF: a donated-key (OAI_ANTH_OPENROUTER_KEY)
+          # failure must NOT retry on the personal OPENROUTER_API_KEY. 'false' is
+          # the code default; pinned here so the no-personal-spend intent is
+          # explicit. This is what makes the 2026-06-12 402 degradation
+          # (donated 429 -> personal fallback -> monthly-limit 402) impossible.
+          OPENROUTER_PERSONAL_KEY_FALLBACK: 'false'
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ASKNEWS_CLIENT_ID: ${{ secrets.ASKNEWS_CLIENT_ID }}
           ASKNEWS_SECRET: ${{ secrets.ASKNEWS_SECRET }}
@@ -91,11 +97,14 @@ jobs:
           # donated/shared path — Google AI Studio doesn't offer one.
           GOOGLE_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_SEARCH_ENABLED: 'true'
-          # OpenRouter Gemini routing (forecaster, stacker, summarizer when the
-          # ensemble includes a Google model). When 'false' (default), Gemini
-          # OpenRouter calls flow through OPENROUTER_API_KEY only — bypassing
-          # the Metaculus-donated OAI_ANTH_OPENROUTER_KEY wrapper. Off because
-          # the donated-key Google route has been flaky.
+          # OpenRouter Gemini routing (the gemini-3.5-flash forecaster + its
+          # 3.1-pro throttle fallback). 'true' routes Gemini through the donated
+          # OAI_ANTH_OPENROUTER_KEY. With OPENROUTER_PERSONAL_KEY_FALLBACK off,
+          # this is now safe: a flaky/throttled donated Google route drops the
+          # Gemini vote (or switches 3.5-flash -> 3.1-pro, both donated) rather
+          # than falling through to the personal key. 'false' would instead route
+          # Gemini's *primary* through the personal OPENROUTER_API_KEY — the spend
+          # we're avoiding — so keep this 'true' wherever the Gemini forecaster runs.
           GEMINI_USE_DONATED_OPENROUTER_KEY: 'true'
           # Second-pass gap-fill: analyzer identifies gaps in first-pass research,
           # parallel grounded Gemini searches resolve each. Fails soft.

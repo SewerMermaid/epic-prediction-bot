@@ -2586,9 +2586,11 @@ class TestDefaultStackerWiredViaDonatedKey:
         )
         from metaculus_bot.fallback_openrouter import FallbackOpenRouterLlm
 
-        # Both keys present + distinct → wrapper chooses FallbackOpenRouterLlm.
+        # Both keys present + distinct + personal-key fallback enabled → wrapper
+        # chooses FallbackOpenRouterLlm.
         monkeypatch.setenv("OAI_ANTH_OPENROUTER_KEY", "fake_donated")
         monkeypatch.setenv("OPENROUTER_API_KEY", "fake_paid")
+        monkeypatch.setenv("OPENROUTER_PERSONAL_KEY_FALLBACK", "true")
 
         # Pin the new defaults at the constant level — primary is opus-4.5,
         # fallback stays gpt-5.5 (different provider for independent failure mode).
@@ -2642,6 +2644,7 @@ class TestDefaultStackerWiredViaDonatedKey:
 
         monkeypatch.setenv("OAI_ANTH_OPENROUTER_KEY", "fake_donated")
         monkeypatch.setenv("OPENROUTER_API_KEY", "fake_paid")
+        monkeypatch.setenv("OPENROUTER_PERSONAL_KEY_FALLBACK", "true")
 
         captured_llms: list[Any] = []
 
