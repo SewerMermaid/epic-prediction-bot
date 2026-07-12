@@ -106,6 +106,10 @@ def test_two_sessions_ago_writes_files_and_summary(tmp_path, monkeypatch):
     q1 = questions[questions["question_id"] == 1].iloc[0]
     assert q1["my_prediction"] == "80% yes"
     assert q1["title"] == "Question one?"
+    assert q1["accurate"] == "yes"  # 80% yes, resolved yes -> directional hit
+    # Q2 forecast 70% yes but resolved no -> inaccurate.
+    q2 = questions[questions["question_id"] == 2].iloc[0]
+    assert q2["accurate"] == "no"
 
 
 def test_two_sessions_ago_targets_correct_tournament(tmp_path, monkeypatch):

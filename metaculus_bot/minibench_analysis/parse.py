@@ -228,11 +228,22 @@ def my_bot_question_detail(
             "my_answer_url": url,
             "my_prediction": format_my_prediction(bucket, values, qjson),
             "resolution": qjson.get("resolution"),
+            # "accurate" is the intuitive per-question verdict for my bot: directional
+            # (binary), arg-max (MC), or resolved-within-P25-P75 (numeric). "n/a" when
+            # the bot did not answer or the question is not scorable (annulled etc.).
+            "accurate": _yes_no(verdict.tier2_correct),
+            "beat_chance": _yes_no(verdict.beat_chance),
             "answered": verdict.answered,
             "scorable": verdict.scorable,
-            "beat_chance": verdict.beat_chance,
             "tier2_correct": verdict.tier2_correct,
             "peer_score": verdict.peer_score,
         }
     )
     return row
+
+
+def _yes_no(v: bool | None) -> str:
+    """Render a tri-state verdict for the per-question list."""
+    if v is None:
+        return "n/a"
+    return "yes" if v else "no"

@@ -166,5 +166,17 @@ class TestQuestionDetail:
         assert row["my_answer_url"] == row["question_url"]
         assert row["my_prediction"] == "90% yes"
         assert row["resolution"] == "yes"
-        assert row["beat_chance"] is True
+        assert row["accurate"] == "yes"
+        assert row["beat_chance"] == "yes"
         assert row["tier2_correct"] is True
+
+    def test_question_detail_accurate_tristate(self):
+        # Not answered -> accurate is n/a.
+        post = {"id": 1, "question": _binary_q("yes", forecasted=False)}
+        row = my_bot_question_detail(post, post["question"])
+        assert row["accurate"] == "n/a"
+        # Answered but wrong side -> accurate is no.
+        post2 = {"id": 2, "question": _binary_q("no", 0.9)}
+        row2 = my_bot_question_detail(post2, post2["question"])
+        assert row2["accurate"] == "no"
+        assert row2["beat_chance"] == "no"
