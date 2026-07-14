@@ -74,6 +74,9 @@ jobs:
         env:
           METACULUS_TOKEN: ${{ secrets.METACULUS_TOKEN }}
         run: |
+          # pipefail so a CLI crash fails the step instead of being masked by
+          # tee's exit code (which previously left the run green with no files).
+          set -o pipefail
           poetry run python -m metaculus_bot.minibench_analysis.cli \
             --mode two-sessions-ago \
             --output-dir minibench_reports \

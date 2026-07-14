@@ -27,7 +27,12 @@ _PAGE = 100  # Metaculus caps the posts API at 100 per request.
 
 class MetaculusClient:
     def __init__(self, token: str | None = None, *, pace_seconds: float = 0.4) -> None:
-        self.token = token or os.getenv("METACULUS_TOKEN")
+        raw = token if token is not None else os.getenv("METACULUS_TOKEN")
+        # Secrets are routinely stored with a trailing newline. Left unstripped it
+        # lands in the "Authorization: Token <...>" header, which requests/urllib3
+        # rejects with "ValueError: Invalid header value" *before* any call is made
+        # — so strip surrounding whitespace to stay robust to how the secret was set.
+        self.token = raw.strip() if isinstance(raw, str) else raw
         if not self.token:
             raise ValueError("METACULUS_TOKEN must be set to query Metaculus")
         self._pace = pace_seconds
