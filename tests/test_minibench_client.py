@@ -40,3 +40,53 @@ def test_whitespace_only_token_raises(monkeypatch):
     monkeypatch.delenv("METACULUS_TOKEN", raising=False)
     with pytest.raises(ValueError):
         MetaculusClient(token="   \n")
+
+
+def _client(_get):
+    c = MetaculusClient(token="t")
+    c._get = _get  # type: ignore[assignment]
+    return c
+
+
+def test_list_tournaments_matches_minibench_in_paginated_results():
+    calls = []
+
+    def fake_get(path, params=None):
+        calls.append(path)
+        return {
+            "results": [
+                {"id": 1, "slug": "minibench", "name": "MiniBench", "start_date": "2026-06-01"},
+                {"id": 2, "slug": "some-other-cup", "name": "Other", "start_date": "2026-05-01"},
+            ]
+        }
+
+    got = _client(fake_get).list_minibench_tournaments()
+    assert [t["slug"] for t in got] == ["minibench"]
+    assert "/projects/tournaments/minibench/" not in calls  # no fallback needed
+
+
+def test_list_tournaments_tolerates_bare_list_response():
+    def fake_get(path, params=None):
+        # No "results" wrapper — a bare list.
+        return [{"id": 3, "slug": "minibench-archive", "name": "Mini Bench May"}]
+
+    got = _client(fake_get).list_minibench_tournaments()
+    assert [t["slug"] for t in got] == ["minibench-archive"]
+
+
+def test_list_tournaments_falls_back_to_slug_when_none_match():
+    def fake_get(path, params=None):
+        if path == "/projects/tournaments/minibench/":
+            return {"id": 42, "slug": "minibench", "name": "MiniBench"}
+        # Listing returns projects, but none are MiniBench.
+        return {"results": [{"id": 9, "slug": "unrelated", "name": "Unrelated"}]}
+
+    got = _client(fake_get).list_minibench_tournaments()
+    assert [t["slug"] for t in got] == ["minibench"]
+
+
+def test_list_tournaments_empty_when_listing_and_fallback_both_empty():
+    def fake_get(path, params=None):
+        return None  # nothing from the listing, nothing from the slug fetch
+
+    assert _client(fake_get).list_minibench_tournaments() == []

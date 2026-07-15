@@ -152,6 +152,28 @@ def test_all_except_current_excludes_latest(tmp_path, monkeypatch):
     assert set(q_hist["minibench"]) == {"MiniBench A", "MiniBench B"}
 
 
+def test_all_except_current_single_tournament_degrades(tmp_path, monkeypatch):
+    """With only one visible tournament, analyze it (with a note) instead of writing nothing."""
+    fake = _FakeClient()
+    fake.tournaments = [{"id": 1, "slug": "minibench", "name": "MiniBench", "start_date": "2026-06-01"}]
+    monkeypatch.setattr(cli, "MetaculusClient", lambda *a, **k: fake)
+
+    summary = cli.run_all_except_current(fake, str(tmp_path))
+    assert "only one MiniBench tournament" in summary
+    assert "current included" in summary
+
+    hist = pd.read_csv(tmp_path / "my_bot_history_answered.csv")
+    assert len(hist) == 1  # a file is produced, not an empty dir
+    assert hist.iloc[0]["total_answered"] == 3
+
+
+def test_all_except_current_no_tournaments_writes_message(monkeypatch, tmp_path):
+    fake = _FakeClient()
+    fake.tournaments = []
+    summary = cli.run_all_except_current(fake, str(tmp_path))
+    assert "No MiniBench tournaments found" in summary
+
+
 def test_report_records_shapes():
     posts_q = {
         "id": 1,

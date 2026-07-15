@@ -149,9 +149,20 @@ def run_two_sessions_ago(client: MetaculusClient, output_dir: str, *, offset: in
 
 def run_all_except_current(client: MetaculusClient, output_dir: str) -> str:
     tournaments = client.list_minibench_tournaments()
+    if not tournaments:
+        return "No MiniBench tournaments found via the API; nothing to analyze. (See the client log for the raw tournament listing.)"
+    note = ""
     if len(tournaments) < 2:
-        return "Fewer than 2 MiniBench tournaments found; nothing to analyze after excluding the current one."
-    past = tournaments[:-1]  # drop the current (latest) one
+        # Only one tournament is visible (e.g. the listing surfaced nothing and we
+        # fell back to the current slug). Analyze it rather than emit an empty
+        # report, and say so — better a report on available data than no artifact.
+        past = tournaments
+        note = (
+            "> Note: only one MiniBench tournament was visible via the API, so it is "
+            "included here rather than excluded as the 'current' one.\n\n"
+        )
+    else:
+        past = tournaments[:-1]  # drop the current (latest) one
 
     answered_rows: list[dict] = []
     accuracy_rows: list[dict] = []
@@ -173,8 +184,9 @@ def run_all_except_current(client: MetaculusClient, output_dir: str) -> str:
     )
 
     total_answered = sum(r.get("total_answered", 0) for r in answered_rows)
+    scope = "current included" if note else "current excluded"
     lines = [
-        f"### My bot — MiniBench history ({len(past)} tournaments, current excluded)",
+        note + f"### My bot — MiniBench history ({len(past)} tournaments, {scope})",
         "",
         f"Answered **{total_answered}** questions across {len(past)} past MiniBench(es).",
         "",

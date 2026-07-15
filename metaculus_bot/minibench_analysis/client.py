@@ -23,6 +23,10 @@ logger = logging.getLogger(__name__)
 
 _BASE = "https://www.metaculus.com/api"
 _PAGE = 100  # Metaculus caps the posts API at 100 per request.
+# Slug of the current MiniBench tournament (matches forecasting_tools'
+# MetaculusApi.CURRENT_MINIBENCH_ID); used as a fallback when the tournament
+# listing surfaces nothing.
+_CURRENT_MINIBENCH_SLUG = "minibench"
 
 
 class MetaculusClient:
@@ -70,8 +74,15 @@ class MetaculusClient:
         separate projects. We list tournament projects, keep those whose slug or
         name looks like MiniBench, and sort chronologically so callers can index
         (current == last, "two sessions ago" == last but two).
+
+        The ``/projects/tournaments/`` listing was never exercised offline, so it
+        may not surface MiniBench at all. When the scan finds nothing we fall back
+        to fetching the current tournament by its known slug (the same path
+        ``forecasting_tools`` uses) so callers still get at least one tournament.
         """
         found: dict[Any, dict[str, Any]] = {}
+        scanned = 0
+        sample: list[str] = []
         offset = 0
         while True:
             page = self._get("/projects/tournaments/", {"limit": _PAGE, "offset": offset})
@@ -79,13 +90,32 @@ class MetaculusClient:
             if not results:
                 break
             for proj in results:
+                scanned += 1
                 slug = (proj.get("slug") or "").lower()
                 name = (proj.get("name") or "").lower()
+                if len(sample) < 25:
+                    sample.append(slug or name)
                 if "minibench" in slug or "minibench" in name or "mini bench" in name:
                     found[proj.get("id", slug)] = proj
-            if len(results) < _PAGE:
+            # Bare-list responses aren't paginated; stop after a single pass.
+            if not isinstance(page, dict) or len(results) < _PAGE:
                 break
             offset += _PAGE
+
+        if not found:
+            # Diagnostic: surface what the listing actually returned so a zero
+            # result is debuggable from the job log (we can't reach the API offline).
+            logger.warning(
+                "No MiniBench tournament matched in %d scanned project(s); sample slugs: %s. "
+                "Falling back to slug %r.",
+                scanned,
+                sample,
+                _CURRENT_MINIBENCH_SLUG,
+            )
+            current = self._get(f"/projects/tournaments/{_CURRENT_MINIBENCH_SLUG}/")
+            if isinstance(current, dict) and (current.get("id") or current.get("slug")):
+                found[current.get("id", _CURRENT_MINIBENCH_SLUG)] = current
+
         tournaments = sorted(found.values(), key=_tournament_sort_key)
         logger.info("Found %d MiniBench tournament(s): %s", len(tournaments), [t.get("slug") for t in tournaments])
         return tournaments
@@ -153,7 +183,11 @@ class MetaculusClient:
 # ---------------------------------------------------------------------------
 
 
-def _results(page: dict[str, Any] | None) -> list[dict[str, Any]]:
+def _results(page: dict[str, Any] | list | None) -> list[dict[str, Any]]:
+    # Metaculus list endpoints normally return {"results": [...]}, but tolerate a
+    # bare list too (the tournaments listing shape was never verified offline).
+    if isinstance(page, list):
+        return page
     if not isinstance(page, dict):
         return []
     results = page.get("results")
