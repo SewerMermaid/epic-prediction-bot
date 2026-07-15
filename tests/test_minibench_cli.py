@@ -174,6 +174,36 @@ def test_all_except_current_no_tournaments_writes_message(monkeypatch, tmp_path)
     assert "No MiniBench tournaments found" in summary
 
 
+def test_explicit_tournaments_analyzes_given_ids(tmp_path, monkeypatch):
+    """--tournaments bypasses discovery and analyzes the supplied ids/slugs."""
+    fake = _FakeClient()
+    fetched = []
+    seen_posts = []
+    fake.get_tournament = lambda t: (fetched.append(t) or {"id": t, "slug": f"mb-{t}", "name": f"MB {t}"})
+    orig_posts = fake.get_resolved_posts
+    fake.get_resolved_posts = lambda tid: (seen_posts.append(tid) or orig_posts(tid))
+    monkeypatch.setattr(cli, "MetaculusClient", lambda *a, **k: fake)
+
+    rc = cli.main(["--mode", "all-except-current", "--output-dir", str(tmp_path), "--tournaments", " 501 , 502 "])
+    assert rc == 0
+    assert fetched == ["501", "502"]  # whitespace trimmed, both fetched
+    assert seen_posts == ["501", "502"]  # discovery was NOT used
+
+    hist = pd.read_csv(tmp_path / "my_bot_history_answered.csv")
+    assert len(hist) == 2
+    assert set(hist["minibench"]) == {"MB 501", "MB 502"}
+
+
+def test_explicit_tournament_not_found_falls_back_to_bare_id(tmp_path, monkeypatch):
+    fake = _FakeClient()
+    fake.get_tournament = lambda t: None  # not found via API
+    monkeypatch.setattr(cli, "MetaculusClient", lambda *a, **k: fake)
+    summary = cli.run_explicit_tournaments(fake, str(tmp_path), ["mb-99"])
+    assert "explicit list" in summary
+    hist = pd.read_csv(tmp_path / "my_bot_history_answered.csv")
+    assert list(hist["minibench"]) == ["mb-99"]  # bare id used as label
+
+
 def test_report_records_shapes():
     posts_q = {
         "id": 1,

@@ -159,15 +159,41 @@ def run_all_except_current(client: MetaculusClient, output_dir: str) -> str:
         past = tournaments
         note = (
             "> Note: only one MiniBench tournament was visible via the API, so it is "
-            "included here rather than excluded as the 'current' one.\n\n"
+            "included here rather than excluded as the 'current' one. Past MiniBench "
+            "sessions are separate tournaments that the listing does not expose — pass "
+            "their ids/slugs via --tournaments to include them.\n\n"
         )
     else:
         past = tournaments[:-1]  # drop the current (latest) one
+    scope = "current included" if note else "current excluded"
+    return _write_history(client, output_dir, past, note=note, scope=scope)
 
+
+def run_explicit_tournaments(client: MetaculusClient, output_dir: str, ids: list[str]) -> str:
+    """Analyze my bot across an explicit list of tournament ids/slugs.
+
+    Used when MiniBench's past sessions can't be auto-discovered (the tournaments
+    listing does not surface them): the caller supplies the ids/slugs directly,
+    e.g. from the Metaculus tournament URLs the bot competed in.
+    """
+    tournaments: list[dict] = []
+    for raw in ids:
+        proj = client.get_tournament(raw)
+        if isinstance(proj, dict) and (proj.get("id") or proj.get("slug")):
+            tournaments.append(proj)
+        else:
+            logger.warning("Tournament %r not found via API; using it as a bare id/label.", raw)
+            tournaments.append({"id": raw, "slug": raw, "name": raw})
+    return _write_history(client, output_dir, tournaments, note="", scope="explicit list")
+
+
+def _write_history(
+    client: MetaculusClient, output_dir: str, tournaments: list[dict], *, note: str, scope: str
+) -> str:
     answered_rows: list[dict] = []
     accuracy_rows: list[dict] = []
     question_rows: list[dict] = []
-    for t in past:
+    for t in tournaments:
         label = t.get("name") or t.get("slug") or str(t.get("id"))
         posts = client.get_resolved_posts(t.get("id") or t.get("slug"))
         summary = summarize_bot("my-bot", _my_bot_verdicts(posts))
@@ -184,11 +210,10 @@ def run_all_except_current(client: MetaculusClient, output_dir: str) -> str:
     )
 
     total_answered = sum(r.get("total_answered", 0) for r in answered_rows)
-    scope = "current included" if note else "current excluded"
     lines = [
-        note + f"### My bot — MiniBench history ({len(past)} tournaments, {scope})",
+        note + f"### My bot — MiniBench history ({len(tournaments)} tournaments, {scope})",
         "",
-        f"Answered **{total_answered}** questions across {len(past)} past MiniBench(es).",
+        f"Answered **{total_answered}** questions across {len(tournaments)} MiniBench(es).",
         "",
         "| MiniBench | Answered | Overall beat-chance | Overall Tier-2 |",
         "|---|---|---|---|",
@@ -220,7 +245,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-dir", default="minibench_reports")
     parser.add_argument("--session-offset", type=int, default=2, help="How many MiniBenches back (default 2).")
     parser.add_argument("--top-n", type=int, default=10, help="How many top bots to analyze (default 10).")
+    parser.add_argument(
+        "--tournaments",
+        default="",
+        help=(
+            "Comma-separated tournament ids/slugs to analyze explicitly (all-except-current mode). "
+            "Use this for past MiniBench sessions that the tournaments listing does not expose."
+        ),
+    )
     args = parser.parse_args(argv)
+
+    explicit = [t.strip() for t in args.tournaments.split(",") if t.strip()]
 
     os.makedirs(args.output_dir, exist_ok=True)
     client = MetaculusClient()
@@ -231,6 +266,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.mode == "two-sessions-ago":
         summary = run_two_sessions_ago(client, args.output_dir, offset=args.session_offset, top_n=args.top_n)
+    elif explicit:
+        logger.info("Analyzing explicit tournaments: %s", explicit)
+        summary = run_explicit_tournaments(client, args.output_dir, explicit)
     else:
         summary = run_all_except_current(client, args.output_dir)
 

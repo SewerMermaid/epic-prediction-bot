@@ -120,6 +120,10 @@ class MetaculusClient:
         logger.info("Found %d MiniBench tournament(s): %s", len(tournaments), [t.get("slug") for t in tournaments])
         return tournaments
 
+    def get_tournament(self, id_or_slug: int | str) -> dict[str, Any] | None:
+        """Fetch a single tournament/project by numeric id or slug."""
+        return self._get(f"/projects/tournaments/{id_or_slug}/")
+
     def get_leaderboard(self, project_id: int | str) -> list[dict[str, Any]]:
         """Leaderboard entries for a tournament, best rank first (best-effort).
 

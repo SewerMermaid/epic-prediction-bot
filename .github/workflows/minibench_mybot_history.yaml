@@ -7,6 +7,14 @@ name: MiniBench my-bot history
 
 on:
   workflow_dispatch:
+    inputs:
+      tournaments:
+        description: >-
+          Optional comma-separated tournament ids/slugs to analyze explicitly
+          (e.g. past MiniBench sessions the listing does not expose, like
+          "33067,minibench-2026-06"). Leave blank to auto-discover.
+        required: false
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}
@@ -66,6 +74,7 @@ jobs:
           poetry run python -m metaculus_bot.minibench_analysis.cli \
             --mode all-except-current \
             --output-dir minibench_reports \
+            --tournaments "${{ github.event.inputs.tournaments }}" \
             | tee analysis_summary.md
       - name: Upload report files
         if: always()
